@@ -28,14 +28,17 @@ import java.util.Random;
 
 import com.google.common.collect.Maps;
 
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 import org.kiji.schema.EntityId;
 import org.kiji.schema.Kiji;
 import org.kiji.schema.KijiBufferedWriter;
 import org.kiji.schema.KijiTable;
 import org.kiji.schema.KijiURI;
+import org.kiji.schema.impl.async.AsyncKiji;
 import org.kiji.schema.layout.KijiTableLayout;
 
 /**
@@ -74,7 +77,7 @@ public class RandomDataGenerator {
   private static final int NUMBER_OF_PRODUCTS = 1000000;
   private static final int USER_ID_MAX = 1000000;
 
-  private static final Logger LOG = LoggerFactory.getLogger(RandomDataGenerator.class);
+  private static final Logger LOG = (Logger) LoggerFactory.getLogger(RandomDataGenerator.class);
 
   /**
    * Constructs a new instance.
@@ -82,6 +85,7 @@ public class RandomDataGenerator {
    * @throws IOException if there is an error reading any of the input files.
    */
   public RandomDataGenerator() throws IOException {
+    //LOG.info("[ASYNC] Running RandomDatGenerator()");
     // Read the files
     BufferedReader firstNameReader = getReader(FIRST_NAME);
     String line = firstNameReader.readLine();
@@ -125,6 +129,7 @@ public class RandomDataGenerator {
    * @throws IOException if resource doesn't exist.
    */
   private static BufferedReader getReader(String resource) throws IOException {
+    //LOG.info("[ASYNC] Running bufferedReader");
     InputStream is = Thread.currentThread().getContextClassLoader().getResourceAsStream(resource);
     if (is != null) {
       return new BufferedReader(new InputStreamReader(is));
@@ -142,6 +147,7 @@ public class RandomDataGenerator {
    * @throws IOException If there is an exception writing to the KijiTable.
    */
   public void generateData(long numberOfRecords, KijiTable table) throws IOException {
+    //LOG.info("[ASYNC] Running generateData");
     String firstName = null, lastName = null, email = null;
     int userId = 0;
     int productId = 0;
@@ -186,6 +192,7 @@ public class RandomDataGenerator {
 
       if (i % 10000 == 0) {
         LOG.info("Wrote " + i + " rows.");
+        //LOG.info("USING ASYNCKIJI");
       }
     }
     writer.close();
@@ -198,6 +205,8 @@ public class RandomDataGenerator {
    * @throws Exception if there is an exception.
    */
   public static void main(String[] args) throws Exception {
+    //LOG.info("[ASYNC] running main()");
+    //LOG.setLevel(Level.OFF);
     final String userTableInstanceURI;
     if (args.length == 0) {
       userTableInstanceURI = DEFAULT_INSTANCE;
@@ -205,10 +214,11 @@ public class RandomDataGenerator {
       userTableInstanceURI = args[0];
     }
     final KijiURI kijiURI = KijiURI.newBuilder(userTableInstanceURI).build();
-    final Kiji kiji = Kiji.Factory.open(kijiURI);
-
+    //LOG.warn("USING ASYNCKIJI");
+    final Kiji kiji = new AsyncKiji(kijiURI);//Kiji.Factory.open(kijiURI);
+    final Kiji tempKiji = Kiji.Factory.open(kijiURI);
     // Create table.
-    kiji.createTable(
+    tempKiji.createTable(
         KijiTableLayout
             .createFromEffectiveJsonResource(USER_TABLE_LAYOUT)
             .getDesc());
@@ -220,5 +230,6 @@ public class RandomDataGenerator {
     gen.generateData(USER_ID_MAX, userTable);
     userTable.release();
     kiji.release();
+    tempKiji.release();
   }
 }
