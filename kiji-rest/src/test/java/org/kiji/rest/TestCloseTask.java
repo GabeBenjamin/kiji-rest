@@ -48,18 +48,18 @@ public class TestCloseTask extends KijiClientTest {
   private static final String INSTANCE_NAME = "test_close_task_instance";
   private static final String TABLE_NAME = "test_close_task_table";
 
+  private KijiURI mURI;
   private ManagedKijiClient mKijiClient;
   private CloseTask mCloseTask;
 
   @Before
   public void setUp() throws Exception {
     final KijiURI clusterURI = createTestHBaseURI();
-    final KijiURI instanceURI =
-        KijiURI.newBuilder(clusterURI).withInstanceName(INSTANCE_NAME).build();
+    mURI = KijiURI.newBuilder(clusterURI).withInstanceName(INSTANCE_NAME).build();
     // Create the instance
-    KijiInstaller.get().install(instanceURI, getConf());
+    KijiInstaller.get().install(mURI, getConf());
 
-    Kiji kiji = Kiji.Factory.get().open(instanceURI);
+    Kiji kiji = Kiji.Factory.get(mURI).open(mURI);
     try {
       TableLayoutDesc layout =
           KijiTableLayouts.getLayout("org/kiji/rest/layouts/sample_table.json");
@@ -77,6 +77,7 @@ public class TestCloseTask extends KijiClientTest {
   @After
   public void tearDown() throws Exception {
     mKijiClient.stop();
+    KijiInstaller.get().uninstall(mURI, getConf());
   }
 
   @Test
