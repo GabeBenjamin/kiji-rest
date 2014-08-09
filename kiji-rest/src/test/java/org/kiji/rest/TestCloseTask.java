@@ -38,7 +38,6 @@ import org.kiji.schema.KijiInstaller;
 import org.kiji.schema.KijiTable;
 import org.kiji.schema.KijiURI;
 import org.kiji.schema.avro.TableLayoutDesc;
-import org.kiji.schema.impl.async.AsyncKiji;
 import org.kiji.schema.layout.KijiTableLayouts;
 
 /**

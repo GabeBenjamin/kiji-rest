@@ -78,25 +78,27 @@ import org.kiji.rest.config.FresheningConfiguration;
 import org.kiji.rest.representations.KijiRestEntityId;
 import org.kiji.rest.representations.KijiRestRow;
 import org.kiji.rest.util.RowResourceUtil;
+import org.kiji.schema.AsyncKijiResultScanner;
+import org.kiji.schema.AsyncKijiTableReader;
 import org.kiji.schema.EntityId;
+import org.kiji.schema.InternalKijiError;
 import org.kiji.schema.KijiBufferedWriter;
 import org.kiji.schema.KijiColumnName;
 import org.kiji.schema.KijiDataRequest;
 import org.kiji.schema.KijiDataRequestBuilder;
 import org.kiji.schema.KijiDataRequestBuilder.ColumnsDef;
 import org.kiji.schema.KijiIOException;
-import org.kiji.schema.KijiRowData;
+import org.kiji.schema.KijiResult;
 import org.kiji.schema.KijiRowScanner;
 import org.kiji.schema.KijiSchemaTable;
 import org.kiji.schema.KijiTable;
-import org.kiji.schema.KijiTableReader;
 import org.kiji.schema.KijiTableReader.KijiScannerOptions;
 import org.kiji.schema.avro.RowKeyFormat2;
 import org.kiji.schema.filter.FormattedEntityIdRowFilter;
 import org.kiji.schema.filter.KijiRowFilter;
+import org.kiji.schema.impl.KijiResultRowData;
 import org.kiji.schema.layout.KijiTableLayout;
 import org.kiji.schema.util.ResourceUtils;
-import org.kiji.scoring.FreshKijiTableReader;
 
 /**
  * This REST resource interacts with Kiji tables.
@@ -155,7 +157,7 @@ public class RowsResource {
    */
   private class RowStreamer implements StreamingOutput {
 
-    private Iterable<KijiRowData> mScanner = null;
+    private AsyncKijiResultScanner<Object> mScanner = null;
     private final KijiTable mTable;
     private final KijiSchemaTable mSchemaTable;
 
@@ -172,7 +174,7 @@ public class RowsResource {
      * @param schemaTable is the handle to the KijiSchemaTable used to encode the cell's writer
      *        schema as a UID.
      */
-    public RowStreamer(Iterable<KijiRowData> scanner, KijiTable table, int numRows,
+    public RowStreamer(AsyncKijiResultScanner scanner, KijiTable table, int numRows,
         List<KijiColumnName> columns, KijiSchemaTable schemaTable) {
       mScanner = scanner;
       mTable = table;
@@ -190,14 +192,19 @@ public class RowsResource {
     public void write(OutputStream os) {
       int numRows = 0;
       Writer writer = new BufferedWriter(new OutputStreamWriter(os, Charset.forName("UTF-8")));
-      Iterator<KijiRowData> it = mScanner.iterator();
       boolean clientClosed = false;
 
+      KijiResult result = null;
       try {
-        while (it.hasNext() && (numRows < mNumRows || mNumRows == UNLIMITED_ROWS)
+        result = mScanner.next().get();
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+      try {
+        while (result != null && (numRows < mNumRows || mNumRows == UNLIMITED_ROWS)
             && !clientClosed) {
-          KijiRowData row = it.next();
-          KijiRestRow restRow = getKijiRestRow(row, mTable.getLayout(), mColsRequested,
+          KijiResultRowData rowData = new KijiResultRowData(mTable.getLayout(), result);
+          KijiRestRow restRow = getKijiRestRow(rowData, mTable.getLayout(), mColsRequested,
               mSchemaTable);
           String jsonResult = mJsonObjectMapper.writeValueAsString(restRow);
           // Let's strip out any carriage return + line feeds and replace them with just
@@ -207,6 +214,11 @@ public class RowsResource {
           writer.write(jsonResult + "\r\n");
           writer.flush();
           numRows++;
+          try {
+            result = mScanner.next().get();
+          } catch (Exception e) {
+            throw new InternalKijiError(e);
+          }
         }
       } catch (IOException e) {
         clientClosed = true;
@@ -325,7 +337,7 @@ public class RowsResource {
     long[] timeRanges = null;
     KijiTable kijiTable = mKijiClient.getKijiTable(instance, table);
     KijiTableLayout layout = kijiTable.getLayout();
-    Iterable<KijiRowData> scanner = null;
+    AsyncKijiResultScanner scanner = null;
     int maxVersions;
     KijiDataRequestBuilder dataBuilder = KijiDataRequest.builder();
     if (timeRange != null) {
@@ -350,7 +362,7 @@ public class RowsResource {
       throw new WebApplicationException(new IllegalArgumentException("Ambiguous request. "
           + "Specified both jsonEntityId and start/end entity Ids."), Status.BAD_REQUEST);
     }
-    KijiTableReader reader = null;
+    AsyncKijiTableReader reader = null;
     try {
       if (jsonEntityId != null) {
         final KijiRestEntityId kijiRestEntityId =
@@ -361,27 +373,32 @@ public class RowsResource {
               new FormattedEntityIdRowFilter(
                   (RowKeyFormat2) layout.getDesc().getKeysFormat(),
                   kijiRestEntityId.getComponents());
-          reader = kijiTable.openTableReader();
+          reader = kijiTable.getReaderFactory().openAsyncTableReader();
           final KijiScannerOptions scanOptions = new KijiScannerOptions();
+          scanOptions.setReopenScannerOnTimeout(false);
           scanOptions.setKijiRowFilter(entityIdRowFilter);
-          scanner = reader.getScanner(dataBuilder.build(), scanOptions);
+          scanner = reader.getKijiResultScanner(dataBuilder.build(), scanOptions);
         } else {
+          throw new UnsupportedOperationException("No freshness scanning");
+          /*
           // No wildcards found, but potentially valid entity id.
           // Continue scanning point row.
           final EntityId eid = kijiRestEntityId.resolve(layout);
           final KijiDataRequest request = dataBuilder.build();
           // Give priority to request freshness parameter; if not set use default
-          scanner = ImmutableList.of(getKijiRowData(
-              kijiTable,
-              eid,
-              request,
-              freshen != null ? freshen : mFreshenConfig.isFreshen(),
-              timeout != null ? timeout : mFreshenConfig.getTimeout(),
-              getFresheningParameters(uriInfo.getQueryParameters())));
+          scanner = ImmutableList.of(
+              getKijiResult(
+                  kijiTable,
+                  eid,
+                  request,
+                  freshen != null ? freshen : mFreshenConfig.isFreshen(),
+                  timeout != null ? timeout : mFreshenConfig.getTimeout(),
+                  getFresheningParameters(uriInfo.getQueryParameters())));*/
         }
       } else {
         // Single eid not provided. Continue with a range scan.
         final KijiScannerOptions scanOptions = new KijiScannerOptions();
+        scanOptions.setReopenScannerOnTimeout(false);
         if (startEidString != null) {
           final EntityId eid =
               KijiRestEntityId.createFromUrl(startEidString, null).resolve(layout);
@@ -392,8 +409,8 @@ public class RowsResource {
               KijiRestEntityId.createFromUrl(endEidString, null).resolve(layout);
           scanOptions.setStopRow(eid);
         }
-        reader = kijiTable.openTableReader();
-        scanner = reader.getScanner(dataBuilder.build(), scanOptions);
+        reader = kijiTable.getReaderFactory().openAsyncTableReader();
+        scanner = reader.getKijiResultScanner(dataBuilder.build(), scanOptions);
       }
     } catch (KijiIOException kioe) {
       mKijiClient.invalidateTable(instance, table);
@@ -425,16 +442,19 @@ public class RowsResource {
    * @return row data.
    * @throws IOException in case the data can not be fetched.
    */
-  private KijiRowData getKijiRowData(
+  private KijiResult getKijiResult(
       final KijiTable table,
       final EntityId eid,
       final KijiDataRequest request,
       final boolean freshen,
       final long timeout,
-      final Map<String, String> fresheningParameters) throws IOException {
-    KijiRowData rowData;
+      final Map<String, String> fresheningParameters
+  ) throws IOException {
+    KijiResult result;
     // TODO: add FreshRequestOptions to disable freshening and simplify below - WDSCORE-75
     if (freshen) {
+      throw new UnsupportedOperationException("No freshining supported");
+      /*
       // Do freshening
       FreshKijiTableReader reader = mKijiClient.getFreshKijiTableReader(
           table.getURI().getInstance(),
@@ -445,11 +465,16 @@ public class RowsResource {
               .withParameters(fresheningParameters)
               .build();
       rowData = reader.get(eid, request, freshOpts);
+      */
     } else {
       // Don't freshen
-      rowData = RowResourceUtil.getKijiRowData(table, eid, request);
+      try {
+        result = RowResourceUtil.getKijiRowData(table, eid, request);
+      } catch (Exception e) {
+        throw new KijiIOException(e);
+      }
     }
-    return rowData;
+    return result;
   }
 
   /**

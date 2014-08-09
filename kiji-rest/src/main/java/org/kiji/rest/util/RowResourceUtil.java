@@ -48,17 +48,18 @@ import org.kiji.rest.representations.KijiRestCell;
 import org.kiji.rest.representations.KijiRestEntityId;
 import org.kiji.rest.representations.KijiRestRow;
 import org.kiji.rest.representations.SchemaOption;
+import org.kiji.schema.AsyncKijiBufferedWriter;
+import org.kiji.schema.AsyncKijiTableReader;
 import org.kiji.schema.DecodedCell;
 import org.kiji.schema.EntityId;
 import org.kiji.schema.KijiCell;
 import org.kiji.schema.KijiColumnName;
 import org.kiji.schema.KijiDataRequest;
 import org.kiji.schema.KijiDataRequestBuilder.ColumnsDef;
+import org.kiji.schema.KijiResult;
 import org.kiji.schema.KijiRowData;
 import org.kiji.schema.KijiSchemaTable;
 import org.kiji.schema.KijiTable;
-import org.kiji.schema.KijiTableReader;
-import org.kiji.schema.KijiTableWriter;
 import org.kiji.schema.avro.SchemaType;
 import org.kiji.schema.layout.CellSpec;
 import org.kiji.schema.layout.KijiTableLayout;
@@ -282,14 +283,13 @@ public final class RowResourceUtil {
    *
    * @throws IOException if the retrieve fails.
    */
-  public static KijiRowData getKijiRowData(KijiTable table, EntityId eid,
-      KijiDataRequest request) throws IOException {
+  public static KijiResult getKijiRowData(KijiTable table, EntityId eid,
+      KijiDataRequest request) throws Exception {
 
-    KijiRowData returnRow = null;
-    final KijiTableReader reader = table.openTableReader();
+    KijiResult returnRow = null;
+    final AsyncKijiTableReader reader = table.getReaderFactory().openAsyncTableReader();
     try {
-      returnRow = reader.get(eid, request);
-
+      returnRow = reader.getResult(eid, request).get();
     } finally {
       reader.close();
     }
@@ -309,7 +309,7 @@ public final class RowResourceUtil {
    * @throws IOException When the put fails.
    */
   public static void putCell(
-      final KijiTableWriter writer,
+      final AsyncKijiBufferedWriter writer,
       final EntityId entityId,
       final String jsonValue,
       final KijiColumnName column,
@@ -327,7 +327,7 @@ public final class RowResourceUtil {
       datum = reader.read(null, new DecoderFactory().jsonDecoder(schema, jsonValue));
     }
     // Write the put.
-    writer.put(entityId, column.getFamily(), column.getQualifier(), timestamp, datum);
+    writer.put(entityId, column, timestamp, datum);
   }
 
   /**
@@ -342,7 +342,7 @@ public final class RowResourceUtil {
    */
   public static void writeRow(KijiTable kijiTable, EntityId entityId,
       KijiRestRow kijiRestRow, KijiSchemaTable schemaTable) throws IOException {
-    final KijiTableWriter writer = kijiTable.openTableWriter();
+    final AsyncKijiBufferedWriter writer = kijiTable.getWriterFactory().openAsyncBufferedWriter();
     // Default global timestamp.
     long globalTimestamp = System.currentTimeMillis();
 
@@ -372,8 +372,7 @@ public final class RowResourceUtil {
                 if (parsedCounterValue.isIntegralNumber()) {
                   // Write the counter cell.
                   writer.put(entityId,
-                      column.getFamily(),
-                      column.getQualifier(),
+                      column,
                       timestamp,
                       parsedCounterValue.asLong());
                 } else if (parsedCounterValue.isContainerNode()) {
@@ -386,10 +385,12 @@ public final class RowResourceUtil {
                                 + "timestamp. Do not specify timestamp in request."));
                       }
                       // Increment counter cell.
+                      throw new UnsupportedOperationException("Cannot do increments");
+                      /*
                       writer.increment(entityId,
                           column.getFamily(),
                           column.getQualifier(),
-                          parsedCounterValue.get(COUNTER_INCREMENT_KEY).asLong());
+                          parsedCounterValue.get(COUNTER_INCREMENT_KEY).asLong()); */
                     } else {
                       throw new WebApplicationException(
                           new IllegalArgumentException("Counter increment could not be parsed "

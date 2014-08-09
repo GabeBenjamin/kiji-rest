@@ -39,7 +39,8 @@ import org.kiji.schema.Kiji;
 import org.kiji.schema.KijiDataRequest;
 import org.kiji.schema.KijiTable;
 import org.kiji.schema.KijiURI;
-import org.kiji.schema.impl.async.AsyncKiji;
+import org.kiji.schema.impl.async.AsyncHBaseKiji;
+import org.kiji.schema.impl.async.AsyncHBaseKijiFactory;
 import org.kiji.scoring.FreshKijiTableReader;
 
 /**
@@ -138,7 +139,7 @@ public class KijiInstanceCache {
    * @throws IOException if error while opening kiji.
    */
   public KijiInstanceCache(KijiURI uri) throws IOException {
-    mKiji = new AsyncKiji(uri); //Kiji.Factory.open(uri);
+    mKiji = new AsyncHBaseKijiFactory().open(uri); //Kiji.Factory.open(uri);
   }
 
   /**
